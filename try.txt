@@ -1,0 +1,48 @@
+//@version=5
+indicator(title='Custom Indicator', overlay=true)
+import ta-lib
+// EMA settings
+ema_length = input.int(20, title='EMA Length')
+ema = ta.ema(close, ema_length)
+
+// ATR settings
+atr_length = input.int(14, title='ATR Length')
+atr = ta.rma(ta.tr(true), atr_length)
+
+// Support and Resistance settings
+sr_length = input.float(2, minval=0.1, title='S/R Length', step=0.1)
+sr1_type = input.string(title='Bottom Line', defval='Support', options=['Support', 'Resistance'])
+sr2_type = input.string(title='Top Line', defval='Resistance', options=['Support', 'Resistance'])
+
+// Calculate Support/Resistance levels
+sr1 = sr1_type == 'Support' ? ema - atr * sr_length : ema + atr * sr_length
+sr2 = sr2_type == 'Support' ? ema - atr * sr_length : ema + atr * sr_length
+
+// Plot EMA and Support/Resistance levels
+plot(ema, title='EMA', color=color.blue)
+plot(sr1, title='Support', color=color.green)
+plot(sr2, title='Resistance', color=color.red)
+
+// RSI and ADX settings
+rsi_length = input.int(14, title='RSI Length')
+rsi_buy_level = input.float(30, title='RSI Buy Level')
+rsi_sell_level = input.float(70, title='RSI Sell Level')
+
+adx_length = input.int(14, title='ADX Length')
+adx_threshold = input.int(20, title='ADX Threshold')
+
+// Calculate RSI and ADX values
+rsi = ta.rsi(close, rsi_length)
+adx = ta.adx(high, low, close, adx_length)
+
+// Generate Buy/Sell signals
+buy_signal = low <= sr1 and rsi < rsi_buy_level and adx < adx_threshold
+sell_signal = high >= sr2 and rsi > rsi_sell_level
+
+// Plot Buy/Sell signals
+plotshape(series=buy_signal, title="Buy Signal", location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.small)
+plotshape(series=sell_signal, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// Generate alerts
+alertcondition(buy_signal, title='Buy Signal', message='Price has hit support level, RSI is oversold, and ADX is below threshold!')
+alertcondition(sell_signal, title='Sell Signal', message='Price has hit resistance level, RSI is overbought, and ADX is above threshold!')
