@@ -1,0 +1,443 @@
+//@version=5
+indicator("Supertrend - Optimised Exit", overlay = true, max_lines_count = 500, max_labels_count = 500)
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// |                                   INPUT                                    |
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+s = "‏ "
+// Table Position 
+tablePos = input.string("Top Right", "Table Location", 
+             ["Top Right" , "Middle Right"  , "Bottom Right" , 
+              "Top Center", "Middle Center" , "Bottom Center", 
+              "Top Left"  , "Middle Left"   , "Bottom Left" ], group = "Table Setting")
+    
+// Table Size
+tableSiz = input.string("Small", "Table Size   ", 
+             ["Auto",  "Huge",  "Large", "Normal", "Small", "Tiny"], group = "Table Setting")
+
+// Table Color
+tBgCol = input.color(#898b8e, "Title  "+s,   inline = "1", group = "Table Setting")
+txtCol = input.color(#000000, " Text"+s+s+s, inline = "1", group = "Table Setting")
+cBgCol = input.color(#cdcdce, " Cell ",      inline = "1", group = "Table Setting")
+
+cUpCol = input.color(#007a00, "Positive",    inline = "2", group = "Table Setting")
+cNuCol = input.color(#ffea04, "Neutral",     inline = "2", group = "Table Setting")
+cDnCol = input.color(#8B0000, "Negative",    inline = "2", group = "Table Setting")
+
+
+// SuperTrend
+supAtr = input.int(10, "ATR Length", 1,            group = "Supertrend Indicator")
+factor = input.float(3.0, "Factor",                group = "Supertrend Indicator")
+pltChk = input.bool(true, "Show Supertrend Line?", group = "Supertrend Indicator", inline = "2")
+upCol  = input.color(color.green, " ",           group = "Supertrend Indicator", inline = "2")
+dnCol  = input.color(color.red, "",              group = "Supertrend Indicator", inline = "2")
+
+
+// Equity
+equty = input.float(100000, "Starting Equity ($)    ", 0, group = "Equity")
+eqPer = input.float(50,     "investment (%)",      0, group = "Equity")
+
+
+// Exit Trade Optomization
+iMin  = input.float(1,         "Base (%)",      0,             group = "Exit Trade Optomization", 
+         tooltip = "Min = Base(%)\nMax = Base(%) + Step(%) x Number of Points\n\n\n" + 
+         "Table Will Display Up to Best 30 Optimized Exits(%)")
+iStp  = input.float(1,         "Step (%)",    0.1,             group = "Exit Trade Optomization")
+iMtp  = input.int(20,   "Number of Points", 1, 100,            group = "Exit Trade Optomization")
+
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// |                                CALCULATION                                 |
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+inMin = iMin
+inStp = iStp
+inMax = iMin + (iMtp - 1) * iStp
+
+// ++++++++++++ List Function
+list(min, max, step) =>
+    out = matrix.new<float>(na, na, na)
+    float n = min
+    while n <= max                                    
+        matrix.add_row(out, matrix.rows(out), array.from(n, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0))
+        n += step
+    out
+
+// ++++++++++++ Optimization
+var rsltStg = array.new<float>(na), 
+
+var tpOptm  = matrix.new<float>(na, na, na)
+var slOptm  = matrix.new<float>(na, na, na)
+
+if barstate.isfirst
+    rsltStg := array.from(1, 1, 0, 0, 0, 0, 0, 0, 0) // Raw Strategy Results
+
+    tpOptm  := list(inMin, inMax, inStp) // TakeProfit Array Optimization
+    slOptm  := list(inMin, inMax, inStp) // StopLoss Array Optimization
+
+// Optimize Strategy
+Optmz(mfe, mae, nPnl, tPnl) =>
+
+    // TP Optimization
+    if matrix.rows(tpOptm) > 0
+        for i = 0 to matrix.rows(tpOptm) - 1
+            tp    = matrix.get(tpOptm, i, 0) / 100 
+            tpPnL = (1 - (mfe > tp ? tp : tPnl) * (nPnl/tPnl)) * matrix.get(tpOptm, i, 1)
+            
+            matrix.set(tpOptm, i, 1,               tpPnL)
+            matrix.set(tpOptm, i, 2,     (1-tpPnL) * 100)
+
+            cmltv = matrix.get(tpOptm, i, 3) * (1 + nPnl) 
+            matrix.set(tpOptm, i, 3,               cmltv)
+            matrix.set(tpOptm, i, 4,   (cmltv - 1) * 100)
+
+    // SL Optimization
+    if matrix.rows(slOptm) > 0
+        for i = 0 to matrix.rows(slOptm) - 1
+            sl    = - matrix.get(slOptm, i, 0) / 100 
+            slPnL = (1 - (mae < sl ? sl : tPnl) * (nPnl/tPnl)) * matrix.get(slOptm, i, 1)
+            
+            matrix.set(slOptm, i, 1,               slPnL)
+            matrix.set(slOptm, i, 2,     (1-slPnL) * 100)
+
+            cmltv = matrix.get(slOptm, i, 3) * (1 + nPnl) 
+            matrix.set(slOptm, i, 3,               cmltv)
+            matrix.set(slOptm, i, 4,   (cmltv - 1) * 100)
+
+
+// Collect Result of Optimized Strategy
+clctOptmz(mtx, j, nPnl, tPnl, mae, baln) =>
+    cmltv = matrix.get(mtx, j, 5) * (1 + nPnl) 
+    matrix.set(mtx, j, 5,               cmltv)
+    matrix.set(mtx, j, 6,   (cmltv - 1) * 100)
+
+   // MAX DD                
+    maxEQ = matrix.get(mtx, j, 7) > cmltv ? matrix.get(mtx, j, 7) : cmltv
+    matrix.set(mtx, j, 7,  maxEQ)
+
+    inDrw = matrix.get(mtx, j, 8) - math.abs(mae*nPnl/tPnl)
+    matrix.set(mtx, j, 9,  inDrw)
+
+    cmDrw = cmltv/maxEQ - 1
+    matrix.set(mtx, j, 8, cmDrw)
+
+    maxDD = inDrw < matrix.get(mtx, j, 10) ? inDrw : matrix.get(mtx, j, 10)
+    matrix.set(mtx, j, 10, maxDD)
+
+    // Profit Factor
+    if nPnl >= 0 
+        posPnl = matrix.get(mtx, j, 11) + baln * nPnl
+        matrix.set(mtx, j, 11,          posPnl)
+    else
+        negPnl = matrix.get(mtx, j, 12) + baln * nPnl
+        matrix.set(mtx, j, 12,          negPnl)
+
+    matrix.set(mtx, j, 13, math.abs(matrix.get(mtx, j, 11)/matrix.get(mtx, j, 12)))
+
+
+// ++++++++++++ Strategy Function
+calStrtegy(enSig, exSig, optmize, tpsl, tp, sl, j) => 
+    
+    // [0] Declaring Variables 
+    var trdNum = 0,       var side = int(na),   var tim = int(na),   var entry = float(na), 
+    var exit = float(na), var tPnl = float(na), var mfe = float(na), var mae   = float(na),
+    var baln = 1.0,       var size = float(na)
+
+    var takeProfit = float(na), var stopLoss   = float(na)
+
+    // [2] Update Values
+    if not na(side)
+
+        // Runup
+        mfe := side ==  1 and  (high/entry - 1) > mfe ?  (high/entry - 1) : 
+               side == -1 and -(low /entry - 1) > mfe ? -(low /entry - 1) : mfe
+        
+        // Drawdown
+        mae := side ==  1 and  (low /entry - 1) < mae ?  (low /entry - 1) : 
+               side == -1 and -(high/entry - 1) < mae ? -(high/entry - 1) : mae 
+        
+        // Total PNL
+        tPnl := math.sign(side) * (close/entry - 1)
+
+        // Last Price
+        exit := close  // Last Price
+
+    // [3] Exit Singal
+    if not na(side)
+        if tpsl
+            if not na(tp) and side ==  1 ? high >= takeProfit : low <= takeProfit
+                
+                takeProfit := (side ==  1 and open >= takeProfit) or
+                              (side == -1 and open <= takeProfit) ? open : takeProfit
+
+                tPnl := math.sign(side) * (takeProfit/entry - 1)
+                nPnl  = tPnl * (eqPer/100)
+
+                clctOptmz(tpOptm, j, nPnl, tPnl, mae, baln)
+                
+                baln := baln * ( 1 + nPnl)
+                side  := int(na)
+
+            if not na(sl) and side == 1 ? low <= stopLoss : high >= stopLoss
+                
+                stopLoss :=  (side ==  1 and open <= stopLoss) or 
+                             (side == -1 and open >= stopLoss) ? open : stopLoss
+
+                tPnl := math.sign(side) * (stopLoss/entry - 1)
+                nPnl  = tPnl * (eqPer/100)
+
+                clctOptmz(slOptm, j, nPnl, tPnl, mae, baln)
+                
+                baln := baln * ( 1 + nPnl)
+                side  := int(na)
+            
+        if exSig and not na(side) 
+            nPnl  = tPnl * (eqPer/100) // Net PnL
+
+            // Run Optimization
+            if optmize
+                Optmz(mfe, mae, nPnl, tPnl)
+
+                cmltv = array.get(rsltStg, 0) * (1 + nPnl)
+                array.set(rsltStg, 0,               cmltv)
+                array.set(rsltStg, 1,   (cmltv - 1) * 100)
+
+                // MAX DD               
+                maxEQ = array.get(rsltStg, 2) > cmltv ? array.get(rsltStg, 2) : cmltv
+                array.set(rsltStg, 2,  maxEQ)
+
+                inDrw = array.get(rsltStg, 3) - math.abs(mae*nPnl/tPnl)
+                array.set(rsltStg, 4,  inDrw)
+
+                cmDrw = cmltv/maxEQ - 1
+                array.set(rsltStg, 3, cmDrw)
+
+                maxDD = inDrw < array.get(rsltStg, 5) ? inDrw : array.get(rsltStg, 5)
+                array.set(rsltStg, 5, maxDD)
+
+                // Profit Factor
+                if nPnl >= 0 
+                    posPnl = array.get(rsltStg, 6) + baln * nPnl
+                    array.set(rsltStg, 6,          posPnl)
+                else
+                    negPnl = array.get(rsltStg, 7) + baln * nPnl
+                    array.set(rsltStg, 7,          negPnl)
+
+                array.set(rsltStg, 8, math.abs(array.get(rsltStg, 6)/array.get(rsltStg, 7)))
+
+            else
+                if not na(tp)
+                    clctOptmz(tpOptm, j, nPnl, tPnl, mae, baln)
+                
+                else if not na(sl)
+                    clctOptmz(slOptm, j, nPnl, tPnl, mae, baln)
+            
+            baln := baln * ( 1 + nPnl)
+            side := int(na)     
+            
+    // [1] Entry Signals
+    if enSig != 0 // (long == 1 or short == -1) 
+        trdNum += 1,       side := enSig,   tim := time,    entry := close
+        exit   := close,   tPnl := 0,       mfe := 0,       mae   := 0
+        size   := (baln * (eqPer/100)) / close
+
+        if tpsl
+            takeProfit := side == 1 ? entry * (1 + tp) : entry * (1 - tp)
+            stopLoss   := side == 1 ? entry * (1 - sl) : entry * (1 + sl)
+
+
+// ++++++++++++ Supertrend Indicator
+[super, dirc] = ta.supertrend(factor, supAtr)
+
+long  = dirc != dirc[1] and dirc == -1
+short = dirc != dirc[1] and dirc ==  1
+
+// ++++++++++++ Run Raw Strategy
+calStrtegy(long ? 1 : short ? -1 : 0, dirc != dirc[1], true, false, float(na), float(na), int(na))
+
+
+// ++++++++++++ Run Optimized Strategy
+// TP Side
+rsltOpt = matrix.new<float>(na, 5, na)
+bestTp(mtx, i) =>
+    if matrix.rows(mtx) > i
+        calStrtegy(long ? 1 : short ? -1 : 0, dirc != dirc[1], false, true, matrix.get(mtx, i, 0)/100, float(na), i)
+        matrix.add_row(rsltOpt, matrix.rows(rsltOpt), 
+             array.from(1, matrix.get(mtx, i, 0), matrix.get(mtx, i, 6), matrix.get(mtx, i, 10), matrix.get(mtx, i, 13)))
+
+bestTp(tpOptm, 00), bestTp(tpOptm, 01), bestTp(tpOptm, 02), bestTp(tpOptm, 03), bestTp(tpOptm, 04),
+bestTp(tpOptm, 05), bestTp(tpOptm, 06), bestTp(tpOptm, 07), bestTp(tpOptm, 08), bestTp(tpOptm, 09),
+bestTp(tpOptm, 10), bestTp(tpOptm, 11), bestTp(tpOptm, 12), bestTp(tpOptm, 13), bestTp(tpOptm, 14),
+bestTp(tpOptm, 15), bestTp(tpOptm, 16), bestTp(tpOptm, 17), bestTp(tpOptm, 18), bestTp(tpOptm, 19),
+bestTp(tpOptm, 20), bestTp(tpOptm, 21), bestTp(tpOptm, 22), bestTp(tpOptm, 23), bestTp(tpOptm, 24),
+bestTp(tpOptm, 25), bestTp(tpOptm, 26), bestTp(tpOptm, 27), bestTp(tpOptm, 28), bestTp(tpOptm, 29),
+bestTp(tpOptm, 30), bestTp(tpOptm, 31), bestTp(tpOptm, 32), bestTp(tpOptm, 33), bestTp(tpOptm, 34),
+bestTp(tpOptm, 35), bestTp(tpOptm, 36), bestTp(tpOptm, 37), bestTp(tpOptm, 38), bestTp(tpOptm, 39),
+bestTp(tpOptm, 40), bestTp(tpOptm, 41), bestTp(tpOptm, 42), bestTp(tpOptm, 43), bestTp(tpOptm, 44),
+bestTp(tpOptm, 45), bestTp(tpOptm, 46), bestTp(tpOptm, 47), bestTp(tpOptm, 48), bestTp(tpOptm, 49),
+bestTp(tpOptm, 50), bestTp(tpOptm, 51), bestTp(tpOptm, 52), bestTp(tpOptm, 53), bestTp(tpOptm, 54),
+bestTp(tpOptm, 55), bestTp(tpOptm, 56), bestTp(tpOptm, 57), bestTp(tpOptm, 58), bestTp(tpOptm, 59),
+bestTp(tpOptm, 60), bestTp(tpOptm, 61), bestTp(tpOptm, 62), bestTp(tpOptm, 63), bestTp(tpOptm, 64),
+bestTp(tpOptm, 65), bestTp(tpOptm, 66), bestTp(tpOptm, 67), bestTp(tpOptm, 68), bestTp(tpOptm, 69),
+bestTp(tpOptm, 70), bestTp(tpOptm, 71), bestTp(tpOptm, 72), bestTp(tpOptm, 73), bestTp(tpOptm, 74),
+bestTp(tpOptm, 75), bestTp(tpOptm, 76), bestTp(tpOptm, 77), bestTp(tpOptm, 78), bestTp(tpOptm, 79),
+bestTp(tpOptm, 80), bestTp(tpOptm, 81), bestTp(tpOptm, 82), bestTp(tpOptm, 83), bestTp(tpOptm, 84),
+bestTp(tpOptm, 85), bestTp(tpOptm, 86), bestTp(tpOptm, 87), bestTp(tpOptm, 88), bestTp(tpOptm, 89),
+bestTp(tpOptm, 90), bestTp(tpOptm, 91), bestTp(tpOptm, 92), bestTp(tpOptm, 93), bestTp(tpOptm, 94),
+bestTp(tpOptm, 95), bestTp(tpOptm, 96), bestTp(tpOptm, 97), bestTp(tpOptm, 98), bestTp(tpOptm, 99),
+
+
+// SL Side
+bestSl(mtx, i) =>
+    if matrix.rows(mtx) > i
+        calStrtegy(long ? 1 : short ? -1 : 0, dirc != dirc[1], false, true, float(na), matrix.get(mtx, i, 0)/100, i)
+        matrix.add_row(rsltOpt, matrix.rows(rsltOpt), 
+             array.from(-1, matrix.get(mtx, i, 0), matrix.get(mtx, i, 6), matrix.get(mtx, i, 10), matrix.get(mtx, i, 13)))
+
+bestSl(slOptm, 00), bestSl(slOptm, 01), bestSl(slOptm, 02), bestSl(slOptm, 03), bestSl(slOptm, 04),
+bestSl(slOptm, 05), bestSl(slOptm, 06), bestSl(slOptm, 07), bestSl(slOptm, 08), bestSl(slOptm, 09),
+bestSl(slOptm, 10), bestSl(slOptm, 11), bestSl(slOptm, 12), bestSl(slOptm, 13), bestSl(slOptm, 14),
+bestSl(slOptm, 15), bestSl(slOptm, 16), bestSl(slOptm, 17), bestSl(slOptm, 18), bestSl(slOptm, 19),
+bestSl(slOptm, 20), bestSl(slOptm, 21), bestSl(slOptm, 22), bestSl(slOptm, 23), bestSl(slOptm, 24),
+bestSl(slOptm, 25), bestSl(slOptm, 26), bestSl(slOptm, 27), bestSl(slOptm, 28), bestSl(slOptm, 29),
+bestSl(slOptm, 30), bestSl(slOptm, 31), bestSl(slOptm, 32), bestSl(slOptm, 33), bestSl(slOptm, 34),
+bestSl(slOptm, 35), bestSl(slOptm, 36), bestSl(slOptm, 37), bestSl(slOptm, 38), bestSl(slOptm, 39),
+bestSl(slOptm, 40), bestSl(slOptm, 41), bestSl(slOptm, 42), bestSl(slOptm, 43), bestSl(slOptm, 44),
+bestSl(slOptm, 45), bestSl(slOptm, 46), bestSl(slOptm, 47), bestSl(slOptm, 48), bestSl(slOptm, 49),
+bestSl(slOptm, 50), bestSl(slOptm, 51), bestSl(slOptm, 52), bestSl(slOptm, 53), bestSl(slOptm, 54),
+bestSl(slOptm, 55), bestSl(slOptm, 56), bestSl(slOptm, 57), bestSl(slOptm, 58), bestSl(slOptm, 59),
+bestSl(slOptm, 60), bestSl(slOptm, 61), bestSl(slOptm, 62), bestSl(slOptm, 63), bestSl(slOptm, 64),
+bestSl(slOptm, 65), bestSl(slOptm, 66), bestSl(slOptm, 67), bestSl(slOptm, 68), bestSl(slOptm, 69),
+bestSl(slOptm, 70), bestSl(slOptm, 71), bestSl(slOptm, 72), bestSl(slOptm, 73), bestSl(slOptm, 74),
+bestSl(slOptm, 75), bestSl(slOptm, 76), bestSl(slOptm, 77), bestSl(slOptm, 78), bestSl(slOptm, 79),
+bestSl(slOptm, 80), bestSl(slOptm, 81), bestSl(slOptm, 82), bestSl(slOptm, 83), bestSl(slOptm, 84),
+bestSl(slOptm, 85), bestSl(slOptm, 86), bestSl(slOptm, 87), bestSl(slOptm, 88), bestSl(slOptm, 89),
+bestSl(slOptm, 90), bestSl(slOptm, 91), bestSl(slOptm, 92), bestSl(slOptm, 93), bestSl(slOptm, 94),
+bestSl(slOptm, 95), bestSl(slOptm, 96), bestSl(slOptm, 97), bestSl(slOptm, 98), bestSl(slOptm, 99),
+
+
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// |                                   TABLE                                    |
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// Get Tbale Location & Size
+locNsze(x) => 
+    y   = str.split(str.lower(x), " ")
+    out = ""
+    for i = 0 to array.size(y) - 1
+        out := out + array.get(y, i)
+        if i != array.size(y) - 1
+            out := out + "_"
+    out
+
+// Timeframe Form Function
+tfTxt(x) =>
+    if not str.contains(x, "S") and not str.contains(x, "M") and 
+       not str.contains(x, "W") and not str.contains(x, "D")
+        if str.tonumber(x)%60 == 0
+            str.tostring(str.tonumber(x)/60)+"H"
+        else 
+            x + "min"
+    else 
+        str.tostring(timeframe.multiplier) + x
+
+// Create Table
+var tbl = table.new(locNsze(tablePos), 4, 41,
+          frame_width  = 1, frame_color  = color.new(tBgCol, 100), 
+          border_width = 1, border_color = color.new(tBgCol, 100))
+
+// Cell Function
+cell(col, row, txt, color) => 
+    table.cell(tbl, col, row, text = txt, text_color = txtCol, bgcolor = color, 
+     text_size = locNsze(tableSiz))
+
+// Raw Table Cells
+spce(col, row, txt1, txt2) =>
+    cell(col,   row, txt1, tBgCol), 
+    cell(col, row+1, txt2, cBgCol),
+
+// Color Function
+colorFun(val, max, min, base) =>
+    val > base ? color.from_gradient(val, base, max, cNuCol, cUpCol) :
+                 color.from_gradient(val, min, base, cDnCol, cNuCol)
+
+// Final Equity
+eqy(pnl) => equty * (1+pnl/100)
+
+// Draw Table
+if barstate.islast
+    table.clear(tbl, 0, 0, 3, 40)
+    
+    // Specification
+    y = 0
+    cell(0, y, "Specification", tBgCol), table.merge_cells(tbl, 0, y, 3, y), y += 1
+
+    spce(0, y, "Strategy", "Supertrend")
+    spce(1, y, "Start Equity",         str.tostring(equty, "$#.00"))
+    table.merge_cells(tbl, 1, y, 2, y), table.merge_cells(tbl, 1, y + 1, 2, y + 1)
+    spce(3, y, "Investment(%)", str.tostring(eqPer, format.percent)), y += 2
+    
+
+    // Raw Strategy Backtest
+    pnl = 0.0
+    if array.size(rsltStg) > 0
+        // Separator
+        table.cell(tbl, 0, y, height = 1), table.merge_cells(tbl, 0, y, 3, y), y += 1
+
+        // Raw Strategy Backtest
+        cell(0, y, "Raw Strategy Backtest", tBgCol), table.merge_cells(tbl, 0, y, 3, y), y += 1
+        
+        pnl := array.get(rsltStg, 1)
+
+        spce(0, y, "Equity", str.tostring(eqy(pnl), "$#.00"))
+        spce(1, y, "PnL(%)", str.tostring(pnl, format.percent))
+        spce(2, y, "MAX DD", str.tostring(math.abs(array.get(rsltStg, 5)) * 100, format.percent))
+        spce(3, y, "Profit Factor", str.tostring(array.get(rsltStg, 8), "#.###")) , y += 2
+
+    // Optimized Table
+    if matrix.rows(rsltOpt) > 0
+        matrix.sort(rsltOpt, 2, order.descending)
+    
+        // Separator
+        table.cell(tbl, 0, y, height = 1), table.merge_cells(tbl, 0, y, 3, y), y += 1
+
+        // Optimization Table        
+        cell(0, y, "Optimized Exit Trade Backtest", tBgCol), table.merge_cells(tbl, 0, y, 3, y), y += 1
+        
+        cell(0, y, "Ranking Best "+ syminfo.ticker +" Trading Exits for\nSupertrend Strategy Based on User inputs" + 
+         " over\nits Historical Performance in " + tfTxt(timeframe.period) + " timeframe.", 
+         cBgCol), table.merge_cells(tbl, 0, y, 3, y), y += 1
+
+        cell(0, y, "Exit(%)", tBgCol), cell(1, y, "PnL(%)",        tBgCol)
+        cell(2, y, "MAX DD",  tBgCol), cell(3, y, "Profit Factor", tBgCol), y+=1
+
+
+        // Find Absolute Max PNL% For Coloring
+        maxPnl = math.abs(matrix.get(rsltOpt, 0, 2)) > math.abs(matrix.get(rsltOpt, matrix.rows(rsltOpt) - 1, 2)) ?
+                 math.abs(matrix.get(rsltOpt, 0, 2)) : math.abs(matrix.get(rsltOpt, matrix.rows(rsltOpt) - 1, 2))
+
+        for i = 0 to (matrix.rows(rsltOpt) > 29 ? 29 : matrix.rows(rsltOpt) - 1)
+            pnl1   = matrix.get(rsltOpt, i, 2)
+            optCol = colorFun(pnl1, maxPnl, -maxPnl, pnl) 
+            
+            // Optimized Exit(%)
+            exit = (matrix.get(rsltOpt, i, 0) > 0 ? "TP" : "SL") + " = " +
+                   str.tostring(matrix.get(rsltOpt, i, 1), format.percent)
+            cell(0, y, exit, optCol)
+
+            // Optimized PnL(%)
+            cell(1, y, str.tostring(pnl1, format.percent), optCol)
+            
+            // Optimized MAX DD
+            cell(2, y, str.tostring(math.abs(matrix.get(rsltOpt, i, 3)) * 100, format.percent), optCol)
+            
+            // Optimized Profit Factor
+            cell(3, y, str.tostring(matrix.get(rsltOpt, i, 4), "#.###"), optCol)
+
+            y += 1
+
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// |                                    PLOT                                    |
+// |++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++|
+// Supertrend Plots and Signals
+upTrend   = plot(pltChk and dirc < 0 ? super : na, "Up Trend",   upCol, 3, plot.style_linebr)
+downTrend = plot(pltChk and dirc > 0 ? super : na, "Down Trend", dnCol, 3, plot.style_linebr)
+
+plotshape(pltChk and dirc < 0 and dirc != dirc[1] ? super : na, "Long",  shape.labelup,   location.absolute, upCol, 0, "LONG",  color.white, display = display.pane, size = size.small)
+plotshape(pltChk and dirc > 0 and dirc != dirc[1] ? super : na, "Short", shape.labeldown, location.absolute, dnCol, 0, "SHORT", color.white, display = display.pane, size = size.small)
